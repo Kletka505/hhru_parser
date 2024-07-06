@@ -2,13 +2,9 @@ import logging
 import requests
 import psycopg2
 from psycopg2 import sql
-from telegram import Update, ReplyKeyboardMarkup
+from telegram import Update, ReplyKeyboardRemove
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
 from datetime import datetime
-
-# Логирование
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # Этапы разговора
 SALARY, CITY, KEYWORDS = range(3)
@@ -38,12 +34,11 @@ def get_city_id(city_name):
 
 # Стартовая команда
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    reply_keyboard = [['/start']]
-    markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
-
+    reply_markup = ReplyKeyboardRemove()
+    
     await update.message.reply_text(
         'Добро пожаловать! Пожалуйста, введите минимальную зарплату:',
-        reply_markup=markup
+        reply_markup=reply_markup
     )
     return SALARY
 
@@ -77,7 +72,8 @@ async def keywords(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     params = {
         "text": keywords,
         "area": city_id,
-        "salary": salary
+        "salary": salary,
+        "search_field": "name"
     }
 
     # Выполнение запроса к API
@@ -90,6 +86,7 @@ async def keywords(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     salary_count = 0
     min_salary = None
     max_salary = None
+    popular_vacancies = []
 
     for item in data.get('items', []):
         if 'salary' in item and item['salary']:
@@ -108,10 +105,11 @@ async def keywords(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             elif item['salary']['to']:
                 total_salary += item['salary']['to']
                 salary_count += 1
+        popular_vacancies.append(f"{item['name']} - {item['alternate_url']}")
 
     average_salary = int(total_salary / salary_count) if salary_count > 0 else 0
 
-    # Сохранение в базу данных
+    # Сохранение данных в базу данных
     conn = connect_db()
     cur = conn.cursor()
     cur.execute(
@@ -122,12 +120,16 @@ async def keywords(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     cur.close()
     conn.close()
 
+    # Формирование списка популярных вакансий
+    popular_vacancies_message = "\n".join(popular_vacancies[:5])  # Ограничимся пятью ссылками
+
     # Отправка данных пользователю
     await update.message.reply_text(
         f'Найдено вакансий: {vacancies_count}\n'
         f'Средняя зарплата: {average_salary}\n'
         f'Минимальная зарплата: {min_salary}\n'
-        f'Максимальная зарплата: {max_salary}'
+        f'Максимальная зарплата: {max_salary}\n\n'
+        f'Популярные вакансии:\n{popular_vacancies_message}'
     )
 
     return ConversationHandler.END
